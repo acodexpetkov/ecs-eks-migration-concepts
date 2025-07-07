@@ -1,15 +1,23 @@
 # ECS → AWS EKS / Kubernetes (On-Prem) Migration — Proof of Concept
 
 ## 1 Purpose  
-Show three ways to move a simple **hello-world** service from **AWS ECS** to **Kubernetes**:
+This PoC uses a tiny **hello-world** service to walk through the **entire migration life-cycle** from **AWS ECS** to **Kubernetes**—both **AWS EKS** and an **on-prem Minikube** cluster—while the old and new stacks run **side-by-side**.
 
-| Pattern | When to Use |
-|---------|-------------|
-| **Planned downtime** | Business can tolerate a short outage (typical for ECS → on-prem K8s when networks or firewalls change) |
-| **Zero-downtime — DNS weighted** | Portability use-case (ECS → on-prem K8s) where you can front both clusters with public DNS |
-| **Zero-downtime — Shared ALB weighted** | Same-account **ECS → AWS EKS**; reuse the existing ALB and shift traffic by listener weights |
+**What it proves**
 
-The PoC focuses on architecture and pipelines. It is **not** production-ready without further hardening.
+* **Build once, deploy twice**  
+  * **ECS** receives its usual **rolling-update**.  
+  * **Kubernetes** is updated through a **Helm** chart that Argo CD automatically syncs into Minikube (GitOps).  
+
+* **Three cut-over styles**  
+  1. **Planned downtime** (maintenance window).  
+  2. **Zero-downtime via DNS weighting** − ECS → on-prem K8s.  
+  3. **Zero-downtime via ALB listener weighting** − ECS → AWS EKS in the **same account**, re-using the existing ALB with `TargetGroupBinding`.  
+
+* **Reusable patterns** — Terraform modules, Helm templating, and Argo CD GitOps show how to keep IaC, CI/CD, and traffic shifting declarative and reviewable.
+
+> **Scope note**  The focus is on mechanics: parallel deployment, traffic shifting, and rollback safety.  
+> Security, observability, capacity, DR, and other production concerns need additional work before go-live.
 
 ---
 
@@ -23,7 +31,7 @@ The PoC focuses on architecture and pipelines. It is **not** production-ready wi
 | **GitOps UI** | — | Argo CD: <https://argo.alekspetkov.com> (credentials on request) |
 | Ingress | **Application Load Balancer** (ALB) | Same ALB† (AWS EKS path) or new ingress controller (on-prem) |
 
-† On the AWS EKS path we attach Pods via **TargetGroupBinding** with the AWS Load Balancer Controller, so ECS and AWS EKS share one listener.
+† On the AWS EKS path we attach Pods via **TargetGroupBinding** with the AWS Load Balancer Controller so ECS and EKS share one listener.
 
 ---
 
@@ -35,39 +43,34 @@ The PoC focuses on architecture and pipelines. It is **not** production-ready wi
 3. Deploy the app on on-prem K8s; run smoke tests.  
 4. Switch DNS 100 % to on-prem K8s (or point the ALB/ingress to on-prem); shut down ECS tasks.
 
-> **Downtime Disclaimer**  
-> Users will see a brief outage during the DNS cut-over or ALB re-target.  
-> Plan communications and rollback steps accordingly.
+> **Downtime Disclaimer** – Users see a short outage during the cut-over. Prepare comms and rollback steps.
 
 ---
 
 ### 3.2 Zero-Downtime — DNS Weighted (*ECS → on-prem Kubernetes*)  
-1. Ensure **all stateful components are reachable from both ECS and on-prem K8s** (shared DB endpoint, global Redis, etc.).  
-2. Deploy identical image/version to both clusters.  
+1. Ensure **all stateful components are reachable from both clusters**.  
+2. Deploy the same image/version to ECS and on-prem K8s.  
 3. Create a Route 53 weighted record: start 95 % ECS / 5 % on-prem; ramp up on-prem weight.  
 4. Monitor SLOs; roll back if errors rise.  
-5. Shift 100 % to on-prem; delete ECS service.
+5. Shift 100 % to on-prem; delete the ECS service.
 
-> **Zero-Downtime DNS Disclaimer**  
-> *Works only if any request can land on either backend without session loss.*  
-> *Keep TTL ≤ 60 s and use health checks so Route 53 removes unhealthy targets.*
+> **DNS Disclaimer** – Works only if sessions and data are shared. Keep TTL ≤ 60 s; rely on Route 53 health checks.
 
 ---
 
-### 3.3 Zero-Downtime — Shared ALB Weighted (*ECS → AWS EKS in same account*)  
-1. ECS service already registered in **Target Group A** of the existing ALB.  
+### 3.3 Zero-Downtime — Shared ALB Weighted (*ECS → AWS EKS, same account*)  
+1. ECS service is already in **Target Group A** on the ALB.  
 2. Install **AWS Load Balancer Controller** in AWS EKS.  
 3. Add a `TargetGroupBinding`; Pods register into **Target Group B** on the **same listener**.  
-4. In the AWS Console / CLI / Terraform, shift **listener rule weights** (e.g., 95 % A / 5 % B).  
-5. Ramp weight toward B while watching CloudWatch dashboards.  
+4. Adjust **listener rule weights** (e.g., 95 % A / 5 % B).  
+5. Ramp toward B while watching CloudWatch dashboards.  
 6. Shift to 100 % B; remove ECS service and Target Group A.
 
-> **Zero-Downtime ALB Disclaimer**  
-> *Requires shared state as above.* Listener health checks must detach failing targets automatically, and automation should reset weights quickly on error.
+> **ALB Disclaimer** – Needs shared state and robust health checks; automate quick rollback of weights on errors.
 
 ---
 
-## 4 Detailed Migration Workflow (Steps 1–14)
+## 4 Detailed Migration Workflow (Steps 1 – 14)
 
 | # | Step | Key Actions |
 |---|------|-------------|
@@ -79,26 +82,29 @@ The PoC focuses on architecture and pipelines. It is **not** production-ready wi
 | 6 | **Build & Push Image** | GitHub Actions: `dotnet publish → docker build → docker push`. |
 | 7 | **Wire GitOps** | Create an Argo CD *Application* pointing at the Helm chart & cluster. |
 | 8 | **Load / Perf Test** | k6 scripts simulate target TPS; collect baseline metrics. |
-| 9 | **Choose Path** | Select §3.1, §3.2, or §3.3 based on business SLAs. |
+| 9 | **Choose Path** | Pick §3.1, §3.2, or §3.3 based on SLAs. |
 | 10a | **Planned-Downtime Execution** | Freeze traffic → migrate services → deploy on-prem → validate → DNS/ALB cut-over. |
 | 10b | **DNS Weighted Execution** | Deploy in parallel → ramp Route 53 weight → observe SLOs → full cut-over. |
-| 10c | **ALB Weighted Execution** | Deploy in parallel → ramp ALB listener weights → observe dashboards → full cut-over. |
+| 10c | **ALB Weighted Execution** | Deploy in parallel → ramp ALB weights → observe dashboards → full cut-over. |
 | 11 | **Post-Cut Validation** | Functional checks, load-test replay, error-budget review. |
 | 12 | **Decommission ECS** | Delete ECS service, task def, alarms, unused IAM roles/Target Group A. |
 | 13 | **Cleanup & Docs** | Update runbooks, diagrams, architecture docs. |
-| 14 | **Handoff** | Knowledge transfer to Ops/SRE; schedule DR drills and rollback tests. |
+| 14 | **Handoff** | Knowledge transfer to Ops/SRE; plan DR drills & rollback tests. |
 
 ---
 
 ## 5 Live Demo — How to Trigger & Observe
 
-1. **Edit the App** — change a greeting string in `Program.cs`, commit & push.  
-2. **CI/CD Pipeline** auto-builds, tags, and pushes the image.  
-3. **Deployments**  
-   * **ECS URL**: <https://ecs-hello-world.alekspetkov.com>  
-   * **AWS EKS / on-prem URL**: <https://hello-world.alekspetkov.com>  
-   New greeting appears on both once pipelines finish.  
-4. **Argo CD** — open <https://argo.alekspetkov.com>; the `hello-world` card turns **Synced**.  
+1. **Edit the App** — change a greeting in `Program.cs`, commit & push.  
+2. **CI/CD Pipeline** auto-builds, tags, pushes.  
+3. **Endpoints**  
+   * ECS: <https://ecs-hello-world.alekspetkov.com>  
+   * AWS EKS / on-prem: <https://hello-world.alekspetkov.com>  
+   Both display the new greeting post-deploy.  
+4. **Argo CD** — open <https://argo.alekspetkov.com>; `hello-world` turns **Synced**.  
+5. **Traffic Shift**  
+   * **DNS path**: change Route 53 weights.  
+   * **ALB path**: edit listener rule weights between TG A & TG B.
 
 ---
 
@@ -109,16 +115,14 @@ The PoC focuses on architecture and pipelines. It is **not** production-ready wi
 | `DEPLOY_ECS`  | `true/false` — update ECS service                    |
 | `UPDATE_HELM` | `true/false` — bump chart version & Argo CD sync     |
 
-Toggle these in repo settings—no pipeline edits needed.
-
 ---
 
 ## 7 Why Terraform, Helm, and Argo CD? — With vs. Without
 
 | Tool      | Using the Tool (recommended) | Without the Tool (manual approach) |
 |-----------|-----------------------------|------------------------------------|
-| **Terraform** | *Idempotent* AWS EKS provisioning; `plan` / `apply`; reusable modules. | Imperative `eksctl` or console clicks; drift; no audit trail. |
-| **Helm**  | Versioned, parameterised charts; `helm rollback`; DRY YAML. | Raw manifests; copy-paste divergence; manual edits; rollback via Git + `kubectl`. |
+| **Terraform** | *Idempotent* AWS EKS provisioning; `plan`/`apply`; reusable modules. | Imperative `eksctl` or console clicks; drift; no audit trail. |
+| **Helm**  | Versioned, parameterized charts; `helm rollback`; DRY YAML. | Raw manifests; copy-paste divergence; manual edits. |
 | **Argo CD** | GitOps reconciliation; drift detection; multi-cluster view. | `kubectl apply` in CI; state drifts outside Git; manual rollbacks. |
 
 ---
@@ -128,7 +132,7 @@ Toggle these in repo settings—no pipeline edits needed.
 | Feature            | ECS                                    | AWS EKS / On-Prem K8s               |
 |--------------------|----------------------------------------|-------------------------------------|
 | **Platform**       | AWS only                               | Cloud-agnostic (AWS EKS or on-prem) |
-| **Flexibility**    | AWS-managed, limited customisation     | Fully extensible open-source stack  |
+| **Flexibility**    | AWS-managed, limited customization     | Fully extensible open-source stack  |
 | **Portability**    | Tightly coupled to AWS services        | Runs everywhere Kubernetes runs     |
 | **Community**      | AWS ecosystem                          | Large open-source community         |
 | **Migration Impact**| Re-platform effort required            | Re-use workloads across clouds      |
