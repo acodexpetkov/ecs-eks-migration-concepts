@@ -1,0 +1,30 @@
+replicaCount: 2
+image:
+  repository: 454563073530.dkr.ecr.us-east-1.amazonaws.com/hello-world
+  tag: 20250706-1-21826bc
+  pullPolicy: Always
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets:
+  - name: regcred
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 32100
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: hello-world.alekspetkov.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: hello-world-tls
+      hosts:
+        - hello-world.alekspetkov.com
+resources: {}
+autoscaling:
+  enabled: false

@@ -1,0 +1,51 @@
+name: Build Image
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  IMAGE_REPO: hello-world
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Compose image tag
+        id: tag
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d)
+          COUNT=$(git rev-list --count --since=midnight HEAD)
+          TAG="${DATE}-${COUNT}-${COMMIT}"
+          echo "TAG=$TAG"          >> "$GITHUB_ENV"
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "$TAG"              >  image_tag.txt
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push
+        run: |
+          IMAGE="${{ secrets.ECR_REGISTRY }}/${{ env.IMAGE_REPO }}:${TAG}"
+          docker build -t "$IMAGE" .
+          docker push  "$IMAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-meta
+          path: image_tag.txt

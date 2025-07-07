@@ -1,0 +1,33 @@
+graph LR
+  linkStyle default fill:#ffffff
+
+  subgraph diagram ["GitHub Actions - Containers"]
+    style diagram fill:#ffffff,stroke:#ffffff
+
+    1["<div style='font-weight: bold'>Developer</div><div style='font-size: 70%; margin-top: 0px'>[Person]</div>"]
+    style 1 fill:#dddddd,stroke:#9a9a9a,color:#000000
+    6["<div style='font-weight: bold'>Amazon ECR</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div>"]
+    style 6 fill:#c6e6f9,stroke:#8aa1ae,color:#000000
+    7["<div style='font-weight: bold'>Amazon ECS</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div>"]
+    style 7 fill:#c6e6f9,stroke:#8aa1ae,color:#000000
+    8["<div style='font-weight: bold'>Argo CD AutoSync ON</div><div style='font-size: 70%; margin-top: 0px'>[Software System]</div>"]
+    style 8 fill:#c6e6f9,stroke:#8aa1ae,color:#000000
+
+    subgraph 2 ["GitHub Actions"]
+      style 2 fill:#ffffff,stroke:#8aa1ae,color:#8aa1ae
+
+      3["<div style='font-weight: bold'>Build & Push</div><div style='font-size: 70%; margin-top: 0px'>[Container]</div>"]
+      style 3 fill:#8ecae6,stroke:#638da1,color:#000000
+      4["<div style='font-weight: bold'>Deploy to ECS</div><div style='font-size: 70%; margin-top: 0px'>[Container]</div><div style='font-size: 80%; margin-top:10px'>Runs only when env variable<br />DEPLOY_ECS=true</div>"]
+      style 4 fill:#8ecae6,stroke:#638da1,color:#000000
+      5["<div style='font-weight: bold'>Update Helm</div><div style='font-size: 70%; margin-top: 0px'>[Container]</div><div style='font-size: 80%; margin-top:10px'>Runs only when env variable<br />UPDATE_HELM=true</div>"]
+      style 5 fill:#8ecae6,stroke:#638da1,color:#000000
+    end
+
+    1-. "<div>git push</div><div style='font-size: 70%'></div>" .->3
+    3-. "<div>docker push</div><div style='font-size: 70%'></div>" .->6
+    3-. "<div>pass tag</div><div style='font-size: 70%'></div>" .->4
+    3-. "<div>commit tag</div><div style='font-size: 70%'></div>" .->5
+    4-. "<div>force new rolling update<br />deployment</div><div style='font-size: 70%'></div>" .->7
+    5-. "<div>chart commit image update</div><div style='font-size: 70%'></div>" .->8
+  end

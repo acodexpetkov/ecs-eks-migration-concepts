@@ -1,0 +1,54 @@
+name: Update Helm Chart
+
+on:
+
+  workflow_run:
+    workflows: [ "Build Image" ]
+    types: [ completed ]
+
+permissions:
+  contents: write                  
+
+jobs:
+  bump-chart:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.UPDATE_HELM == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Download image_tag.txt
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: build&push.yml
+          run_id:  ${{ github.event.workflow_run.id }}
+          name:    image-meta
+
+      - name: Read tag
+        id: tag
+        run: |
+          TAG=$(cat image_tag.txt)
+          echo "Tag from artifact: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Patch values.yaml
+        run: |
+          yq -i '.image.tag = "${{ steps.tag.outputs.tag }}"' helm/hello-world/values.yaml
+        shell: bash
+        env:
+          YQ_VERSION: 4
+
+      - name: Show resulting values.yaml snippet
+        run: |
+          grep -A1 -n "image:" helm/hello-world/values.yaml || true
+
+      - name: Commit tag bump
+        run: |
+          git config user.email "ci-bot@yourdomain.com"
+          git config user.name  "CI Bot"
+          git add helm/hello-world/values.yaml
+          git commit -m "chore(chart): bump image tag to ${{ steps.tag.outputs.tag }}" || exit 0
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
