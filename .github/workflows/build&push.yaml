@@ -32,7 +32,7 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date +%Y%m%d)
           COUNT=$(git rev-list --count --since=midnight HEAD)
-          TAG="${DATE}-${COUNT}-${COMMIT}"
+          TAG="${DATE}-${COMMIT}"
           echo "TAG=$TAG"          >> "$GITHUB_ENV"
           echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
           echo "$TAG"              >  image_tag.txt
