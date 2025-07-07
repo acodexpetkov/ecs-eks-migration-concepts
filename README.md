@@ -1,14 +1,14 @@
 # ECS → AWS EKS / Kubernetes (On-Prem) Migration — Proof of Concept
 
 ## 1 Purpose  
-This PoC shows **how an application running on AWS ECS can be migrated to AWS EKS or to an on-prem Kubernetes cluster with no downtime** by operating both stacks in parallel and gradually shifting traffic.
+This PoC shows **how an application running on AWS ECS can be migrated to an on-prem Kubernetes cluster with no downtime** by operating both stacks in parallel and gradually shifting traffic.
 
 * The existing **hello-world** service at **<https://ecs-hello-world.alekspetkov.com>** is re-packaged into a **Helm** chart and synced by **Argo CD** into an on-prem **Minikube** cluster, where it is exposed at **<https://hello-world.alekspetkov.com>**.  
 * One image is built, then deployed twice: a rolling update on ECS and a Helm release on Kubernetes.  
-* Weighted **DNS records** let you move traffic from 100 % ECS to 0 % ECS (or back) in fine increments, delivering a zero-downtime cut-over. The same traffic-shifting pattern also works if the target is an AWS EKS cluster in the same AWS account, where ALB listener weights can be used instead of DNS.  
-* Along the way the PoC demonstrates Terraform IaC, Helm templating, Argo CD GitOps, and two traffic-shifting techniques; the live demo focuses on parallel deployment and DNS-based migration.
+* Weighted **DNS records** let you move traffic from 100 % ECS to 0 % ECS (or back) in fine increments, delivering a zero-downtime cut-over.
+* Along the way the PoC demonstrates Helm templating, Argo CD GitOps, parallel deployment and DNS-based migration.
 
-> **Scope note** – The PoC proves mechanics: parallel deploy, weighted traffic shift, and rollback safety. Hardening for security, observability, capacity, and DR is out of scope.
+> **Scope note** – The PoC proves mechanics: parallel deploy, weighted traffic shift on request, and rollback safety. Hardening for security, observability, capacity, and DR is out of scope.
 
 ---
 
@@ -26,12 +26,12 @@ This PoC shows **how an application running on AWS ECS can be migrated to AWS EK
 
 ---
 
-## 3 Migration Strategies
+## 3 Migration Strategies (High Level Overview)
 
 ### 3.1 Planned Downtime — *ECS → on-prem Kubernetes*  
 1. Schedule a maintenance window.  
 2. **Migrate shared services first** (DB, Redis, object storage, secrets) to on-prem.  
-3. Deploy the app on on-prem K8s and run smoke tests.  
+3. Deploy the app on on-prem K8s and run stress tests.  
 4. Switch DNS 100 % to on-prem K8s (or repoint the ALB/ingress); decommission ECS.
 
 > **Downtime disclaimer** – Users see a brief outage during the cut-over; plan comms and rollback.
@@ -63,24 +63,24 @@ This PoC shows **how an application running on AWS ECS can be migrated to AWS EK
 
 ## 4 Detailed Migration Workflow (Steps 1 – 14)
 
-| #  | Step                           | Key Actions                                                                                                  |
-|----|--------------------------------|--------------------------------------------------------------------------------------------------------------|
-| 1  | **Discovery**                  | Export ECS task def, env vars, secrets, IAM roles, networking.                                               |
-| 2  | **Prepare Registry**           | Ensure an ECR/private registry reachable from both clusters.                                                 |
-| 3  | **Provision Cluster**          | **AWS EKS** via Terraform; on-prem Minikube or prod K8s via Ansible/scripts.                                  |
-| 4  | **Install Add-ons**            | Helm, Argo CD, Metrics Server. Ingress: ALB + AWS LBC (EKS) or NGINX/Traefik (on-prem).                      |
-| 5  | **Translate Manifests**        | Create Helm chart `helm/hello-world/` with `values.eks.yaml` & `values.onprem.yaml`.                         |
-| 6  | **Build & Push Image**         | GitHub Actions: `dotnet publish → docker build → docker push`.                                              |
-| 7  | **Wire GitOps**                | Create an Argo CD *Application* pointing at the Helm chart and cluster.                                      |
-| 8  | **Load / Perf Test**           | k6 scripts simulate target TPS; capture baseline metrics.                                                    |
-| 9  | **Choose Path**                | Pick strategy §3.1, §3.2, or §3.3 based on SLAs.                                                             |
-| 10a| **Planned-Downtime Execution** | Freeze traffic → migrate services → deploy on-prem → validate → DNS/ALB cut-over.                            |
-| 10b| **DNS-Weighted Execution**     | Deploy in parallel → ramp Route 53 weight → observe SLOs → full cut-over.                                    |
-| 10c| **ALB-Weighted Execution**     | Deploy in parallel → ramp ALB weights → observe dashboards → full cut-over.                                  |
-| 11 | **Post-Cut Validation**        | Functional checks, load-test replay, error-budget review.                                                    |
-| 12 | **Decommission ECS**           | Delete ECS service, task def, alarms, unused IAM roles/Target Group A.                                       |
-| 13 | **Cleanup & Docs**             | Update runbooks, diagrams, architecture docs.                                                                |
-| 14 | **Handoff**                    | Knowledge transfer to Ops/SRE; plan DR drills & rollback tests.                                              |
+| #  | Step                      | Key Actions                                                                          |
+|----|---------------------------|--------------------------------------------------------------------------------------|
+| 1  | **Discovery**             | Export ECS task def, env vars, secrets, IAM roles, networking.                       |
+| 2  | **Prepare Registry**      | Ensure an ECR/private registry reachable from both clusters.                         |
+| 3  | **Provision Cluster**     | **AWS EKS** via Terraform; on-prem Minikube or prod K8s via Ansible/scripts.          |
+| 4  | **Install Add-ons**       | Helm, Argo CD, Metrics Server. Ingress: ALB + AWS LBC (EKS) or NGINX/Traefik (on-prem). |
+| 5  | **Translate Manifests**   | Create Helm chart `helm/hello-world/` with `values.eks.yaml` & `values.onprem.yaml`. |
+| 6  | **Build & Push Image**    | GitHub Actions: `dotnet publish → docker build → docker push`.                       |
+| 7  | **GitOps**                | Create an Argo CD *Application* pointing at the Helm chart and cluster.              |
+| 8  | **Load / Perf Test**      | k6 scripts simulate target TPS; capture baseline metrics.                            |
+| 9  | **Choose Path**           | Pick strategy 3.1, 3.2, or 3.3 based on SLAs.                                        |
+| 10a| **Planned-Downtime Execution** | Freeze traffic → migrate services → deploy on-prem → validate → DNS/ALB cut-over.    |
+| 10b| **DNS-Weighted Execution** | Deploy in parallel → ramp Route 53 weight → observe SLOs → full cut-over.            |
+| 10c| **ALB-Weighted Execution** | Deploy in parallel → ramp ALB weights → observe dashboards → full cut-over.          |
+| 11 | **Post-Cut Validation**   | Functional checks, load-test replay,                                                 |
+| 12 | **Decommission ECS**      | Delete ECS service, task def, alarms, unused IAM roles/Target Group A.               |
+| 13 | **Cleanup & Docs**        | Update runbooks, diagrams, architecture docs.                                        |
+| 14 | **Handoff**               | Knowledge transfer to Ops/SRE; plan DR drills & rollback tests.                      |
 
 ---
 
@@ -93,9 +93,8 @@ This PoC shows **how an application running on AWS ECS can be migrated to AWS EK
    * K8s URL  : <https://hello-world.alekspetkov.com>  
    The new greeting appears on both once deployments finish.  
 4. **Argo CD** — open <https://argo.alekspetkov.com>; `hello-world` application turns **Synced**.  
-5. **Traffic shift**  
-   * **DNS path** : update Route 53 weights.  
-   * **ALB path** : edit listener rule weights between Target Groups A & B.
+5. **Traffic shift only on request for demo**  
+   * **DNS path** : update Route 53 weights.
 
 ---
 
@@ -163,7 +162,7 @@ This PoC shows **how an application running on AWS ECS can be migrated to AWS EK
 
 ## 12 Summary
 
-The PoC proves an **image-once, deploy-twice** workflow, parallel operation of ECS and Kubernetes, and a **zero-downtime** migration path by weighted traffic shifting. Harden IaC, security, observability, and stateful services before production roll-out.
+The PoC proves an **image-once, deploy-twice** workflow, parallel operation of ECS and Kubernetes, and a **zero-downtime** migration path by weighted traffic shifting. 
 
 ---
 
