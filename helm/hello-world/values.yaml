@@ -1,7 +1,7 @@
 replicaCount: 2
 image:
   repository: 454563073530.dkr.ecr.us-east-1.amazonaws.com/hello-world
-  tag: 20250708-8f05ebb
+  tag: 20250710-520cd20
   pullPolicy: Always
 nameOverride: ""
 fullnameOverride: ""
